@@ -1,0 +1,530 @@
+* Big Data Architecture
+
+El objetivo de la práctica es definir la arquitectura de datos y componentes a utilizar para la creación de un Data Lake, cuyo primer objetivo será dar soporte a diferentes analíticas de clientes (generación de KPI’s).
+
+Adicionalmente al diseño, se realizarán algunas prácticas con alguno de los componentes vistos en el curso.
+
+Para ello, la información origen que se dispondrá es la siguiente: 
+   - Las tablas creadas en la práctica de Data 101
+   - Información de Web
+   - Información de web logs
+
+Se elegirán las tablas y datos a tratar en el proyecto, no siendo necesario cargar todos los datos indicados. En el caso de las tablas generadas en MySql para Data101 se cargar subconjuntos de menor cantidad de filas, siempre que sean consistentes entre sí. 
+
+De echo, dado que entiendo que el objetivo de la práctica es validar el conocimiento del proceso de diseño y construcción de una arquitectura basada en Big Data, minimizaré el volumen de los datos a tratar sin afectar al número y tipo de fuentes utilizadas. Esto es:
+
+   - Datos estructurados:
+	 - Clientes
+	 - Facturas
+	 - Metodos de pago
+	 - Servicios / Productos contratados
+
+   - Datos no estructurados:
+	 - Información obtenida mediante APIs en redes sociales u otros servicios
+	 - Información obtenida mediante técnicas de scrapping de contenidos web
+	 - Información obtenida mediante técnicas de parseo de datos de ficheros de logs
+
+La práctica tiene dos partes:
+
+   1. Diseño
+	  - Definición de la analítica a realizar
+	  - Modelo lógico del Datamart y modelo físico en Hive
+	  - Fuentes de datos estructurados y no estructurados
+	  - Ciclo de vida del dato
+   2. Construcción
+	  - Creación de tablas
+	  - Carga de datos inicial
+	  - Transformación entre zonas
+	  - Agregación de datos
+	  - Carga de datos del tablón
+
+A la hora de la construcción nos encontramos con varias situaciones que en un contexto real no se daría:
+   - Los datos de la práctica DATA 101 no son consistentes y requerirían de una adaptación previa
+   - Deberíamos de disponer de acceso a los siguientes recursos:
+	 + Cuenta en redes sociales de la empresa a la que poder atacar vía API
+	 + Logs de acceso de usuarios a los servicios web de la empresa
+
+Por ello, el apartado de construcción se va a plantear de forma teórica basado en las suposiciones que se plantearán durante el desarrollo de la práctica.
+
+* Diseño
+** Bases del diseño a plantear 
+
+Frente a bases de datos tradicionales, el uso de Hadoop framework aporta la capacidad de procesamiento en paralelo con varios nodos (Map Reduce) así como la capacidad de almacenar y gestionar grandes volúmenes de información al dividir cada fichero entre varios nodos gracias al sistema de distribución de archivos HDFS. Dicha capacidad requiere de una definición y planificación previa, según el tipo de datos a tratar, de aspectos como el tipo de almacenamiento, compresión, particionamiento, bucketing, cuando se trata de tablas externas o gestionadas, etc.
+
+Es importante tener en cuanta para el diseño de la analítica a realizar, que los datos estructurados que se tratan en entornos de Big Data son (y deben de ser) consistentes desde su origen en el área de RAW DATA, ya que el origen de los datos, que son las fuentes de datos que alimentan los sistemas de Big Data son bases de datos con funcionalidades que facilitan la consistencia de los mismos. Por lo tanto, no es necesario validar la consistencia de los datos que de forma recurrente son actualizados en STAGING y que una vez tratados llegan a la TRUSTED ZONE para finalmente disponer de los datos finales en la REFINED ZONE.
+
+Además, en relación con los datos no estructurados, las arquitecturas Big Data permiten el uso de "schema on read"", donde la estructura de los objetos de BBDD no está definida previa a la carga y no hay ,por tanto, validación contra estructura. La estructura de BBDD se define en la lectura, con la flexibilidad de poder cambiar la estructura en base los datos a obtener en cada tipo de lectura. El “schema on write” que es el que ya conocemos de las BBDD tradicionales, necesita que la estructura del objeto de base de datos esté definida previa a la carga y los datos son validados contra esta estructura.
+
+** Definición de la analítica a realizar
+
+Para el desarrollo de la definición de la analítica a realizar tenemos que pensar en el resultado final que se quiere obtener sin tener en cuenta, a priori, el origen de los datos. Sin embargo, en éste caso, la funcionalidad está asociada a la disponibilidad de las fuentes adecuadas.
+
+Por lo tanto, a partir de los datos de la práctica "Data 101" y otros datos (ya sean de fuentes reales o teóricas) se va a diseñar un tablón con información relativa a los clientes de la empresa americana de telecomunicaciones TC Telecom S.L. con el objetivo de conocer mejor a sus clientes en relación distintos aspectos de los servicios y productos.
+
+Para ello, en relación al ODS, se utilizarán las tablas de clientes y servicios (productos) principalmente y algunas de sus tablas asociadas. Adicionalmente, utilizaremos información obtenida vía API de servicios de internet relacionados con redes sociales en los que suponemos que la empresa tiene presencia (como Twitter y Facebook ) así como la actividad de navegación del cliente en el espacio web de usuarios de la empresa, dado que suponemos que el acceso a contenidos de cliente requiere de previa autenticación en la plataforma (web logs). Finalmente, analizaremos la posibilidad de obtener información adicional de alguna página web, utilizando scrapping, que ayude a complementar la información de servicios en relación a la localización en la que se encuentra el domicilio del cliente.
+
+La información básica relativa a redes sociales que proporcionará el tablón será el número de entradas de los usuarios en las mismas, al igual que en relación al acceso al portal de cliente de la empresa en el que se facilitará el número de accesos. Finalmente, suponiendo que existiese una página web en la que se detallase por ciudad las empresas con servicios similares, se presentará el número de empresas de la competencia.
+
+** Modelo lógico
+
+Basado en la definición de la analítica realizada, el modelo lógico planteado aparece representado en el fichero "1 Modelo lógico.png".
+
+En éste caso se trata del modelo lógico "global" ya que se corresponde con el modelo lógico de RAW en lo que respecta a los orígenes de datos y de la REFINED zone en referencia al Tablón. Los modelos lógicos intermedios de STAGING y TRUSTED se basan en modificaciones sobre el modelo de RAW que serán descritos en el apartado de "Fuentes origen de los datos estructurados y no estructurados".
+
+** Modelo físico
+
+En el presente apartado se define el modelo físico a desplegar sobre Hive, indicando de forma inicial el formato de almacenamiento, compresión, particionamiento, bucketing y cuando se trata de tablas externas o gestionadas, que son importantes decisiones de diseño que afectarán al rendimiento de Hive así como a la manera en la que almacenamos estas tablas.
+
+Para la toma de decisiones a priori, sin pruebas previas, se debe de considerar:
+
+- Tipo de formato/compresión: Hive soporta distintos tipos de formato con distinto índice de compresión y la velocidad de acceso a la información. Los formatos son Text, Sequence File, AVRO, Parquet y Optimized Row Columnar (ORC) entre otros. En general, para seleccionar el formato más adecuado dependerá de la velocidad de lectura a la hora de realizar consultas así como la capacidad de compresión para minimizar el almacenamiento. Sin embargo, la velocidad de escritura de los distintos formatos no va a ser un factor decisivo. Por lo tanto, basado en sus características y las necesidades de la práctica, ORC es el formato más adecuado, dado que cuenta con el mayor factor de compresión manteniendo una elevada velocidad de lectura.
+
+- Particionamiento: Las tablas que se almacenan en cualquier otra ruta del sistema HDFS son tablas externas. En este tipo de tablas un “drop table” elimina sólo la estructura, pero el/los ficheros de datos que la conforman permanecen en su ubicación. Particionar una tabla significa guardar los datos en subdirectorios categorizados por los valores de una columna, esto permite a Hive excluir datos innecesarios cuando tiene que realizar una consulta. Las tablas de Hive permiten ser particionadas por una o más claves, de modo que toda la información con la misma clave se guarda en la misma partición, por lo que afecta a su almacenamiento. El particionamiento utilizando los campos adecuados puede mejorar de manera considerable los tiempos de lectura.
+
+- Bucketing: es un sistema que permite distribuir los datos de manera uniforme entre varios archivos o directorios, este sistema permite realizar consultas eficientes entre tablas con bucketing en el mismo campo y con el mismo número de bloques. Por ejemplo, para el sampling, así cuando se realice un join, el tiempo de ejecución empleado será menor por su manera de organizar los datos. 
+
+- Tablas externas/gestionadas: Las tablas externas son aquellas en las que al eliminar la tabla se elimina sólo la estructura, pero los ficheros de datos que la conforman permanecen en su ubicación. Hive tiene mayor “control” sobre las tablas gestionadas, de modo que a diferencia de las tablas externas un “drop table” de la misma elimina los datos además de la estructura de la tabla. 
+
+Con dichas consideraciones, el modelo físico planteado para las distintas tablas es:
+
+- ODS_HC_CLIENTES: formato ORC con compresión, particionamiento por el campo "ID_DIRECCION" con 5 buckets sobre el campo "ID_CLIENTE", tabla externa
+- ODS_HC_SERVICIOS: formato ORC con compresión, particionamiento por el campo "ID_PRODUCTO" con 5 buckets sobre el campo "ID_CLIENTE", tabla externa
+- ODS_DM_PRODUCTOS: formato AVRO, sin particionamiento ni buckets, tabla externa
+- ODS_HC_DIRECCIONES: formato AVRO, sin particionamiento ni buckets, tabla externa
+- ODS_DM_CIUDADES_ESTADOS: formato AVRO, sin particionamiento ni buckets, tabla externa
+- FNE_REDES_SOCIALES: en formato ORC con compresión, particionada por el campo "FECHA" con 5 buckets sobre el campo USUARIO, tabla externa
+- FNE_WEB_LOGS: en formato ORC con compresión, particionada por el campo "FECHA" con 5 buckets sobre el campo IP, tabla externa
+- FNE_WEB_SCRAP: en formato ORC con compresión, particionada por el campo "CIUDAD" con 3 buckets sobre el campo IP, tabla externa
+- Tablon: formato ORC con compresión, particionamiento por el campo "DE_PRODUCTO" con 5 buckets sobre el campo "ID_CLIENTE", tabla gestionada
+
+** Fuentes origen de los datos estructurados y no estructurados
+
+Una vez definido el modelo, se van a identificar las fuentes de datos estructurados y “no estructurados” que formarán parte del proyecto y se analizará:
+
+   -  la estrategia de carga inicial y periódica de cada fuente
+   -  el mecanismo que se usarían para garantizar el ciclo de vida y la calidad del dato
+   -  los componentes a utilizar en cada caso y justificar el por qué
+
+En el caso de la presente práctica las fuentes origen de datos se han visto en el modelo, y son:
+
+- ODS_HC_CLIENTES: La tabla de clientes es el elemento clave de partida para desarrollar el Tablon de KPIs. Sin embargo, dado que el objetivo es obtener información relativa a los servicios de los clientes, existen muchos campos que serán eliminados (como la fecha de nacimiento) al pasar de la zona RAW a STAGING. Una vez dichos campos hayan sido eliminados, la tabla se copia a la zona TRUSTED previa adecuación de campos como "ID_DIRECCION", que serán sustituidos por un campo "CIUDAD" a partir de consultas cruzadas con sus tablas asociadas (ODS_HC_DIRECCIONES y ODS_DM_CIUDADES_ESTADOS) que no serán copiadas a la zona TRUSTED.
+
+- ODS_HC_SERVICIOS: La tabla de servicios es, al igual que ODS_HC_CLIENTES, una de las tablas clave, ya que vincula a los clientes con los productos. El igual que en el caso de ODS_HC_CLIENTES, existen muchos campos que serán eliminados (como PUNTO_ACCESO) al pasar de la zona RAW a STAGING. Una vez dichos campos hayan sido eliminados, la tabla se copia a la zona TRUSTED previa adecuación de campos como "ID_DIRECCION", que serán sustituidos por un campo "CIUDAD" a partir de consultas cruzadas con sus tablas asociadas (ODS_HC_DIRECCIONES y ODS_DM_CIUDADES_ESTADOS) que no serán copiadas a la zona TRUSTED. En este caso, también se integrará la información de productos de la tabla ODS_DM_PRODUCTOS, de forma que la misma no será copiada a la zona TRUSTED tampoco. Los datos de servicios/productos permitirán desarrollar el KPI relativo al tipo de servicios más demandados.
+
+- ODS_DM_PRODUCTOS: La tabla de productos, tal como se ha explicado, es una tabla secundaría que se cargará en la zona RAW y se copia en STAGING sin los datos del gobierno de datos introducidos por la base de datos original. Ésta será utilizada en las transformaciones de la tabla ODS_HC_SERVICIOS de STAGING a TRUSTED.
+
+- ODS_HC_DIRECCIONES: La tabla de direcciones, tal como se ha explicado, es una tabla secundaría que se cargará en la zona RAW y se copia en STAGING sin los datos del gobierno de datos introducidos por la base de datos original. Ésta será utilizada en las transformaciones de la tabla ODS_HC_CLIENTES de STAGING a TRUSTED.
+
+- ODS_DM_CIUDADES_ESTADOS: La tabla de ciudades-estado, tal como se ha explicado, es una tabla secundaría que se cargará en la zona RAW y se copia en STAGING sin los datos del gobierno de datos introducidos por la base de datos original. Ésta será utilizada en las transformaciones de la tabla ODS_HC_CLIENTES de STAGING a TRUSTED.
+
+- FNE_REDES_SOCIALES: Se utilizarán las APIs de distintas redes sociales para obtener información de los comentarios que realizan los clientes tanto en referencia a cuentas de la propia empresa como a empresas de la competencia, creando una tabla en la zona RAW. A partir de dicha información, mediante programas de paseo en python, se elaborará la información que permitirá crear los KPI relativos al "sentimiento" de los clientes en referencia a sus productos y a la competencia. La información tratada se dejará en una tabla en la zona TRUSTED.
+
+- FNE_WEB_LOGS: Los logs de acceso a la web de usuarios de la empresa se guardan en la zona RAW. Posteriormente los ficheros de log de acceso a la web de usuarios se van a parsear, utlizando código python, y se guardará como tabla en la zona de STAGING para contabilizar el número de registros. Además, se guardarán las direcciones IP de los clientes, por lo que se puede a futuro cruzar dichos datos con información proveniente de sistemas de seguridad.
+
+- FNE_WEB_SCRAP: Se utilizarán técnicas de scrapping con distintas páginas web relativas a productos para obtener información de los comentarios que realizan los clientes tanto en referencia a productos de la propia empresa como a empresas de la competencia, creando una tabla en la zona RAW. A partir de dicha información, mediante programas de paseo en python, se elaborará la información que permitirá crear los KPI relativos al "sentimiento" de los clientes en referencia a sus productos y a la competencia. La información tratada se dejará en una tabla en la zona TRUSTED.
+
+*** Estrategia de carga inicial y periódica de cada fuente
+
+Las distintas tablas importadas desde la base de datos de ODS se cargan diaria y directamente sobre RAW DATA sin ningún tipo de modificación con el objetivo de agilizar dicha tarea y adicionalmente disponer de una copia con los datos originales por si hubiese que realizar algún tipo de verificación. En el proceso de paso a STAGING se eliminarán todos los datos originales que no son relevantes, incluyendo los relativos a la gobernanza del dato introducidos desde la fuente original. Adicionalmente, se añadirán en las tablas principales datos de tablas secundarias como el caso de las ciudades, donde añadiremos un nuevo dato CIUDAD a la tabla de clientes que nos permitirá no depender de las tablas "ODS_HC_DIRECCIONES" y "ODS_DM_CIUDADES_ESTADOS" en la zona de STAGING, caso similar al de la tabla "ODS_HC_SERVICIOS" donde añadiremos un nuevo campo PRODUCTOS con la información del producto de la tabla "ODS_DM_PRODUCTOS", permitiéndonos no tener que depender de la tabla de "ODS_DM_PRODUCTOS" en STAGING.
+
+Para el caso de los datos no estructurados se seguirá una filosofía similar, dejando una copia en RAW de la información original en forma de ficheros de datos (ya que entiendo que será el formato original) y las tablas con un primer nivel de filtrado se crearán en STAGING.
+
+En ambos casos, los datos finales con los que se alimentará el tablón se dejarán en tablas de la TRUSTED Zone, y el la REFINED zone será donde se cree la tabla que contiene el tablón.
+
+*** Gobernanza del dato
+
+La gobernanza del dato es un aspecto fundamental a tener en cuenta al desarrollar el proceso de carga de datos ya que nos permite asegurar la calidad de los posteriores análisis que se realicen.
+
+Algunas de las buenas prácticas a seguir para implementar cierto grado de control son:
+   - rigurosidad y coherencia a la hora de asignar los nombres de las tablas y de la información cargada
+   - cargar toda la información en bruto en la zona de RAW DATA
+   - utilizar campos de control en cada tabla de STAGING. Un campo "fecha de inserción" y "fecha de modificación" por cada registro permite solventar posibles conflictos en caso de duplicidad
+
+*** Componentes a utilizar
+
+Los componentes a utilizar en cada uno de los casos en los que se gestionan datos son:
+
+   - Sqoop: para la carga de las tablas en HDFS desde la base de datos
+   - APIs: para la obtención de datos de las redes sociales (Twitter, Facebook)
+   - Python: para el parseo de ficheros de log, scrapping y carga de los ficheros
+
+* Construcción
+
+Se va a desarrollar el planteamiento de construcción del sistema.
+
+** Carga de datos inicial con Scoop
+
+#+BEGIN_SRC 
+sqoop import --connect jdbc:mysql://192.168.1.10:3306/ODS --driver com.mysql.jdbc.Driver --username bda --password bda --table ODS_HC_CLIENTES --target-dir /bda/RAW/ODS_HC_CLIENTES -m 1 -z
+sqoop import --connect jdbc:mysql://192.168.1.10:3306/ODS --driver com.mysql.jdbc.Driver --username bda --password bda --table ODS_HC_DIRECCIONES --target-dir /bda/RAW/ODS_HC_DIRECCIONES -m 1 -z
+sqoop import --connect jdbc:mysql://192.168.1.10:3306/ODS --driver com.mysql.jdbc.Driver --username bda --password bda --table ODS_DM_CIUDADES_ESTADOS --target-dir /bda/RAW/ODS_DM_CIUDADES_ESTADOS -m 1 -z
+sqoop import --connect jdbc:mysql://192.168.1.10:3306/ODS --driver com.mysql.jdbc.Driver --username bda --password bda --table ODS_HC_SERVICIOS --target-dir /bda/RAW/ODS_HC_SERVICIOS -m 1 -z
+sqoop import --connect jdbc:mysql://192.168.1.10:3306/ODS --driver com.mysql.jdbc.Driver --username bda --password bda --table ODS_DM_PRODUCTOS --target-dir /bda/RAW/ODS_DM_PRODUCTOS -m 1 -z
+#+END_SRC
+
+** Creación de tablas, carga de datos estructurados y transformaciones
+
+Una vez cargados los datos con Sqoop, crearemos en Hive la zona de RAW DATA con el siguiente código:
+
+#+BEGIN_SRC
+
+create database zone_raw;
+create database zone_staging;
+create database zone_trusted;
+create database zone_refined;
+
+use zone_raw;
+
+CREATE EXTERNAL TABLE ODS_HC_CLIENTES (
+ ID_CLIENTE int,
+ NOMBRE_CLIENTE string,
+ APELLIDOS_CLIENTE string,
+ NUMDOC_CLIENTE string,
+ ID_SEXO int,
+ ID_DIRECION_CLIENTE int,
+ TELEFONO_CLIENTE bigint,
+ EMAIL string,
+ FC_NACIMIENTO date,
+ ID_PROFESION int,
+ ID_COMPANYA int,
+ FC_INSERT timestamp,
+ FC_MODIFICATION timestamp
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ","
+STORED AS ORC
+LOCATION "/bda/RAW/ODS_HC_CLIENTES";
+ 
+CREATE EXTERNAL TABLE ODS_HC_DIRECCIONES (
+ ID_DIRECCION int,
+ DE_DIRECCION string,
+ DE_CP int,
+ ID_CIUDAD_ESTADO int,
+ FC_INSERT timestamp,
+ FC_MODIFICATION timestamp
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ","
+STORED AS AVRO
+LOCATION "/bda/RAW/ODS_HC_DIRECCIONES";
+ 
+CREATE EXTERNAL TABLE ODS_DM_CIUDADES_ESTADOS (
+ ID_CIUDAD_ESTADO int,
+ DE_CIUDAD string,
+ DE_ESTADO string,
+ ID_PAIS int,
+ FC_INSERT timestamp,
+ FC_MODIFICATION timestamp
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ","
+STORED AS AVRO
+LOCATION "/bda/RAW/ODS_DM_CIUDADES_ESTADOS";
+
+CREATE EXTERNAL TABLE ODS_HC_SERVICIOS (
+   ID_SERVICIO int,
+   ID_CLIENTE int,
+   ID_PRODUCTO int,
+   PUNTO_ACCESO string,
+   ID_CANAL int,
+   ID_AGENTE int,
+   ID_DIRECCION_SERVICIO int,
+   FC_INICIO timestamp,
+   FC_INSTALACION timestamp,
+   FC_FIN timestamp,
+   FC_INSERT timestamp,
+   FC_MODIFICATION timestamp
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ","
+STORED AS ORC
+LOCATION "/bda/RAW/ODS_HC_SERVICIOS";
+
+CREATE EXTERNAL TABLE ODS_DM_PRODUCTOS (
+ ID_PRODUCTO int,
+ DE_PRODUCTO string,
+ FC_INSERT timestamp,
+ FC_MODIFICATION timestamp
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ","
+STORED AS AVRO
+LOCATION "/bda/RAW/ODS_DM_PRODUCTOS";
+
+#+END_SRC
+
+Para pasar los datos que nos interesan de la zona RAW a STAGING creamos un nuevo fichero sql que cree las nuevas tablas tal como se han definido en el diseño, importar los datos adecuados y añadir los registros nuevos para el gobierno de los datos. 
+
+El siguiente código es un ejemplo de las tablas a crear en STAGING. En éste caso se trata de la tabla de clientes:
+
+#+BEGIN_SRC 
+
+use zone_staging;
+
+CREATE EXTERNAL TABLE ODS_HC_CLIENTES
+ LIKE zone_raw.ODS_HC_CLIENTES
+ ROW FORMAT DELIMITED FIELDS TERMINATED BY "|"
+ STORED AS ORC
+ LOCATION "/bda/STAGING/ODS_HC_CLIENTES";
+ 
+ALTER TABLE ODS_HC_CLIENTES ADD COLUMN (DATE timestamp);
+ALTER TABLE ODS_HC_CLIENTES DROP COLUMN NUMDOC_CLIENTE;
+ALTER TABLE ODS_HC_CLIENTES DROP COLUMN TELEFONO_CLIENTE;
+ALTER TABLE ODS_HC_CLIENTES DROP COLUMN FC_NACIMIENTO;
+ALTER TABLE ODS_HC_CLIENTES DROP COLUMN ID_PROFESION;
+ALTER TABLE ODS_HC_CLIENTES DROP COLUMN ID_COMPANYA;
+ALTER TABLE ODS_HC_CLIENTES DROP COLUMN FC_INSERT;
+ALTER TABLE ODS_HC_CLIENTES DROP COLUMN FC_MODIFICATION;
+TRUNCATE TABLE ODS_HC_CLIENTES;
+INSERT INTO TABLE ODS_HC_CLIENTES SELECT ID_CLIENTE, NOMBRE_CLIENTE, APELLIDOS_CLIENTE, ID_SEXO, ID_DIRECION_CLIENTE, EMAIL, "2018-08-17" AS DATE FROM zone_raw.ODS_HC_CLIENTES;
+
+#+END_SRC
+
+De igual forma se crearán las tablas en la zona TRUSTED, y se cargarán con los datos adecuados tal como se definió en el diseño previo.
+
+** Creación de tablas, carga de datos no estructurados y transformaciones
+
+En el diseño se han nombrado tres tipos de datos no estructurados:
+
+   - Provenientes de aplicaciones relativas a redes sociales
+   - Provenientes de los logs de acceso del servidor de aplicaciones web
+   - Provenientes de contenidos web
+
+En el caso de las aplicaciones relativas a redes sociales se desarrollará en python un programa que, utilizando el API de Twitter, realice descargas masivas de twitts de de cuentas tanto de la empresa como de empresas de la competencia, guardando todos los resultados en formato fichero en la zona RAW, con un código similar al siguiente:
+
+#+BEGIN_SRC 
+
+#!/usr/bin/env python
+
+#-----------------------------------------------------------------------
+# twitter-search
+#  - performs a basic keyword search for tweets containing the keywords
+#    "nombre_producto" and "empresa"
+#-----------------------------------------------------------------------
+
+from twitter import *
+
+#-----------------------------------------------------------------------
+# load our API credentials
+#-----------------------------------------------------------------------
+import sys
+sys.path.append(".")
+import config
+
+#-----------------------------------------------------------------------
+# create twitter API object
+#-----------------------------------------------------------------------
+twitter = Twitter(auth = OAuth(config.access_key,
+                  config.access_secret,
+                  config.consumer_key,
+                  config.consumer_secret))
+
+#-----------------------------------------------------------------------
+# perform a basic search 
+# Twitter API docs:
+# https://dev.twitter.com/rest/reference/get/search/tweets
+#-----------------------------------------------------------------------
+query = twitter.search.tweets(q = "Producto empresa")
+
+#-----------------------------------------------------------------------
+# Loop through each of the results, and print its content.
+#-----------------------------------------------------------------------
+for result in query["statuses"]:
+
+f=open("producto_empresa.txt","w")
+f.write("(%s) @%s %s" % (result["created_at"], result["user"]["screen_name"], result["text"]))
+f.close()
+
+#+END_SRC
+
+En el caso de logs de acceso, se utilizará un programa en python para parsear los logs del servidor web similar al que se plantea en el siguiente ejemplo, y se almacenará en fichero en el área de la zona RAW:
+
+#+BEGIN_SRC 
+
+#!/usr/bin/env python
+import sys
+
+def apache_output(line):
+    split_line = line.split()
+    return {'remote_host': split_line[0],
+            'user': split_line[8],
+            'url': split_line[9],
+    }
+
+
+def final_report(logfile):
+    for line in logfile:
+        line_dict = apache_output(line)
+        print(line_dict)
+
+
+if __name__ == "__main__":
+    if not len(sys.argv) > 1:
+        print (__doc__)
+        sys.exit(1)
+    infile_name = sys.argv[1]
+    try:
+        infile = open(infile_name, 'r')
+    except IOError:
+        print ("You must specify a valid file to parse")
+        print (__doc__)
+        sys.exit(1)
+    log_report = final_report(infile)
+    print (log_report)
+    infile.close()
+
+#+END_SRC
+
+Finalmente, para descargar información de páginas web que aporten información acerca de los productos de la competencia y contabilicen el numero de apariciones de determinados conceptos, se utilizarán un programa en python haciendo uso de técnicas de scrapping, similar la siguiente ejemplo, y al igual que en los casos anteriores, éste se almacenará en ficheros en la zona RAW:
+
+#+BEGIN_SRC 
+
+#!/usr/bin/env python
+
+from requests import get
+from requests.exceptions import RequestException
+from contextlib import closing
+from bs4 import BeautifulSoup
+
+def simple_get(url):
+    """
+    Attempts to get the content at `url` by making an HTTP GET request.
+    If the content-type of response is some kind of HTML/XML, return the
+    text content, otherwise return None.
+    """
+    try:
+        with closing(get(url, stream=True)) as resp:
+            if is_good_response(resp):
+                return resp.content
+            else:
+                return None
+
+    except RequestException as e:
+        log_error('Error during requests to {0} : {1}'.format(url, str(e)))
+        return None
+
+
+def is_good_response(resp):
+    """
+    Returns True if the response seems to be HTML, False otherwise.
+    """
+    content_type = resp.headers['Content-Type'].lower()
+    return (resp.status_code == 200 
+            and content_type is not None 
+            and content_type.find('html') > -1)
+
+
+def log_error(e):
+    """
+    It is always a good idea to log errors. 
+    This function just prints them, but you can
+    make it do anything.
+    """
+    print(e)
+
+def get_names():
+    """
+    Downloads the page where the list of products is found
+    and returns a list of strings, one per product
+    """
+    url = 'http://www.acme.com/products.htm'
+    response = simple_get(url)
+
+    if response is not None:
+        html = BeautifulSoup(response, 'html.parser')
+        names = set()
+        for li in html.select('li'):
+            for name in li.text.split('\n'):
+                if len(name) > 0:
+                    names.add(name.strip())
+        return list(names)
+
+    # Raise an exception if we failed to get any data from the url
+    raise Exception('Error retrieving contents at {}'.format(url))
+
+def get_hits_on_name(name):
+    """
+    Accepts a `name` of a product and returns the number
+    of hits that product's Wiki page received in the 
+    last 60 days, as an `int`
+    """
+    # url_root is a template string that is used to build a URL.
+    url_root = 'https://xtools.wmflabs.org/articleinfo/en.wiki.org/{}'
+    response = simple_get(url_root.format(name))
+
+    if response is not None:
+        html = BeautifulSoup(response, 'html.parser')
+
+        hit_link = [a for a in html.select('a')
+                    if a['href'].find('latest-60') > -1]
+
+        if len(hit_link) > 0:
+            # Strip commas
+            link_text = hit_link[0].text.replace(',', '')
+            try:
+                # Convert to integer
+                return int(link_text)
+            except:
+                log_error("couldn't parse {} as an `int`".format(link_text))
+
+    log_error('No pageviews found for {}'.format(name))
+    return None
+
+if __name__ == '__main__':
+    print('Getting the list of names....')
+    names = get_names()
+    print('... done.\n')
+
+    results = []
+
+    print('Getting stats for each name....')
+
+    for name in names:
+        try:
+            hits = get_hits_on_name(name)
+            if hits is None:
+                hits = -1
+            results.append((hits, name))
+        except:
+            results.append((-1, name))
+            log_error('error encountered while processing '
+                      '{}, skipping'.format(name))
+
+    print('... done.\n')
+
+    results.sort()
+    results.reverse()
+
+    if len(results) > 5:
+        top_marks = results[:5]
+    else:
+        top_marks = results
+
+    print('\nThe most popular products are:\n')
+    for (mark, product) in top_marks:
+        f=open("products.txt","w")
+        f.write('{} with {} pageviews'.format(product, mark))
+        f.close()
+
+    no_results = len([res for res in results if res[0] == -1])
+    print('\nBut we did not find results for '
+          '{} products on the list'.format(no_results))
+
+#+END_SRC
+
+A partir de la información de los ficheros, tal como se describe en el diseño, se crearán las tablas (de forma similar al código visto anteriormente) en STAGING, y se sealizará la carga de datos utilizando programas en python que parseen cada uno de los ficheros e inserten la información en las distintas tablas. Las tablas una vez transformadas se copiarán a la zona TRUSTED.
+
+** Creación del tablón
+
+Finalmente, una vez se disponga de toda la infraestructura de datos en la zona de TRUSTED, se crearán las tablas en la zona REFINED, y se cargarán con los datos adecuados tal como se definió en el diseño previo, utilizando consultas sql así como código python para la programación de funcionalidades de machine learning como sentiment analysis utilizando los datos obtenidos de las redes sociales. Para lo que utilizaremos las siguientes librerías:
+
+#+BEGIN_SRC 
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+from sklearn.model_selection import train_test_split # function for splitting data to train and test sets
+
+import nltk
+from nltk.corpus import stopwords
+from nltk.classify import SklearnClassifier
+
+from wordcloud import WordCloud,STOPWORDS
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+from subprocess import check_output
+#+END_SRC
